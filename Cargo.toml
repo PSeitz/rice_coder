@@ -9,8 +9,13 @@ edition = "2021"
 binggan = "0.10.0"
 proptest = "1.5.0"
 rand = "0.8.5"
+zipf = "7.0.1"
 
 [[bench]]
 name = "bench"
 harness = false
 
+
+[profile.release]
+opt-level = 3      # Full optimization for performance
+debug = true
