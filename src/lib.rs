@@ -24,21 +24,17 @@ pub fn estimate_optimal_k(values: &[u32], percentile: f64) -> u8 {
     (32 - value_at_percentile.leading_zeros()) as u8
 }
 
-// Define a trait for the RiceCoder's functionality
-pub trait RiceCoderTrait {
-    fn encode_vals(&mut self, values: &[u32], output: &mut Vec<u8>);
-    fn decode(&self, input: &[u8]) -> Vec<u32>;
-}
-
-pub struct RiceCoder<const K: u8> {
+pub struct RiceCoder {
+    k: u8,
     buffer: u64,    // A 64-bit buffer to store bits before flushing
     buffer_len: u8, // Number of bits currently in the buffer
 }
 
-impl<const K: u8> RiceCoder<K> {
+impl RiceCoder {
     /// Constructor to create a RiceCoder with a const generic k value
-    pub fn new() -> Self {
+    pub fn new(k: u8) -> Self {
         RiceCoder {
+            k,
             buffer: 0,
             buffer_len: 0,
         }
@@ -74,8 +70,8 @@ impl<const K: u8> RiceCoder<K> {
     /// Rice encoding for a given integer
     #[inline]
     fn encode(&mut self, value: u32, output: &mut Vec<u8>) {
-        let quotient = value >> K; // value / 2^k
-        let remainder = value & ((1 << K) - 1); // value % 2^k
+        let quotient = value >> self.k; // value / 2^k
+        let remainder = value & ((1 << self.k) - 1); // value % 2^k
 
         let mut remaining = quotient;
 
@@ -96,7 +92,7 @@ impl<const K: u8> RiceCoder<K> {
         self.write_bits_to_buffer(0, 1);
 
         // Write the remainder in binary form (k bits)
-        self.write_bits_to_buffer(remainder, K);
+        self.write_bits_to_buffer(remainder, self.k);
         self.flush_buffer(output);
     }
 
@@ -110,7 +106,7 @@ impl<const K: u8> RiceCoder<K> {
     }
 
     /// Rice decoding for multiple integers from a byte stream
-    pub fn decode(input: &[u8]) -> Vec<u32> {
+    pub fn decode(&self, input: &[u8]) -> Vec<u32> {
         let total_values = input[0] as usize;
         let input = &input[1..];
         let mut results = Vec::new();
@@ -163,8 +159,8 @@ impl<const K: u8> RiceCoder<K> {
             }
 
             // Decode the binary remainder
-            if let Some(remainder) = read_bits(input, K, &mut byte_pos, &mut bit_pos) {
-                results.push((quotient << K) + remainder);
+            if let Some(remainder) = read_bits(input, self.k, &mut byte_pos, &mut bit_pos) {
+                results.push((quotient << self.k) + remainder);
             } else {
                 break; // Not enough bits to complete the number
             }
@@ -174,57 +170,8 @@ impl<const K: u8> RiceCoder<K> {
     }
 }
 
-impl<const K: u8> Default for RiceCoder<K> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl<const K: u8> RiceCoderTrait for RiceCoder<K> {
-    fn encode_vals(&mut self, values: &[u32], output: &mut Vec<u8>) {
-        self.encode_vals(values, output);
-    }
-
-    fn decode(&self, input: &[u8]) -> Vec<u32> {
-        Self::decode(input)
-    }
-}
-// Function to create a RiceCoder dynamically based on runtime k value (up to 32K)
-pub fn create_rice_coder(k: u8) -> Box<dyn RiceCoderTrait> {
-    match k {
-        0 => Box::new(RiceCoder::<0>::new()),
-        1 => Box::new(RiceCoder::<1>::new()),
-        2 => Box::new(RiceCoder::<2>::new()),
-        3 => Box::new(RiceCoder::<3>::new()),
-        4 => Box::new(RiceCoder::<4>::new()),
-        5 => Box::new(RiceCoder::<5>::new()),
-        6 => Box::new(RiceCoder::<6>::new()),
-        7 => Box::new(RiceCoder::<7>::new()),
-        8 => Box::new(RiceCoder::<8>::new()),
-        9 => Box::new(RiceCoder::<9>::new()),
-        10 => Box::new(RiceCoder::<10>::new()),
-        11 => Box::new(RiceCoder::<11>::new()),
-        12 => Box::new(RiceCoder::<12>::new()),
-        13 => Box::new(RiceCoder::<13>::new()),
-        14 => Box::new(RiceCoder::<14>::new()),
-        15 => Box::new(RiceCoder::<15>::new()),
-        16 => Box::new(RiceCoder::<16>::new()),
-        17 => Box::new(RiceCoder::<17>::new()),
-        18 => Box::new(RiceCoder::<18>::new()),
-        19 => Box::new(RiceCoder::<19>::new()),
-        20 => Box::new(RiceCoder::<20>::new()),
-        21 => Box::new(RiceCoder::<21>::new()),
-        22 => Box::new(RiceCoder::<22>::new()),
-        23 => Box::new(RiceCoder::<23>::new()),
-        24 => Box::new(RiceCoder::<24>::new()),
-        25 => Box::new(RiceCoder::<25>::new()),
-        26 => Box::new(RiceCoder::<26>::new()),
-        27 => Box::new(RiceCoder::<27>::new()),
-        28 => Box::new(RiceCoder::<28>::new()),
-        29 => Box::new(RiceCoder::<29>::new()),
-        30 => Box::new(RiceCoder::<30>::new()),
-        31 => Box::new(RiceCoder::<31>::new()),
-        _ => panic!("Unsupported k value!"),
-    }
+pub fn create_rice_coder(k: u8) -> RiceCoder {
+    RiceCoder::new(k)
 }
 #[cfg(test)]
 mod tests {
@@ -233,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_rice_coding() {
-        let mut coder = RiceCoder::<3>::new(); // Example with k = 3
+        let mut coder = RiceCoder::new(3);
         let original_values: Vec<u32> = vec![37, 12, 5, 150, 255, 0, 10];
 
         // Encoding
@@ -272,7 +219,7 @@ mod tests {
     }
 
     fn print<const K: u8>(val: u32) {
-        let mut coder = RiceCoder::<K>::new(); // Example with k = 3
+        let mut coder = RiceCoder::new(K); // Example with k = 3
 
         // Encoding
         let mut encoded: Vec<u8> = Vec::new();
