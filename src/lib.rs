@@ -1,7 +1,7 @@
 /// Function to estimate the optimal `k` based on a given percentile.
 /// `values`: slice of input values to process.
 /// `percentile`: desired percentile (e.g., 50.0 for median, 90.0 for 90th percentile).
-pub fn estimate_optimal_k(values: &[u32], percentile: f64) -> u8 {
+pub fn estimate_optimal_k(values: &[u32], percentile: usize) -> u8 {
     // Ensure there are values to process
     if values.is_empty() {
         return 0;
@@ -12,7 +12,7 @@ pub fn estimate_optimal_k(values: &[u32], percentile: f64) -> u8 {
     sorted_values.sort_unstable();
 
     // Determine the index for the desired percentile
-    let percentile_index = ((percentile / 100.0) * (sorted_values.len() as f64)).round() as usize;
+    let percentile_index = (percentile * sorted_values.len()) / 100;
 
     // Handle case where percentile index is out of bounds
     let percentile_index = std::cmp::min(percentile_index, sorted_values.len() - 1);
@@ -59,8 +59,6 @@ impl RiceCoder {
     }
 
     pub fn encode_vals(&mut self, values: &[u32], output: &mut Vec<u8>) {
-        assert!(values.len() < 256); // Limit the number of values to 255
-        output.push(values.len() as u8);
         for value in values {
             self.encode(*value, output);
         }
@@ -97,19 +95,20 @@ impl RiceCoder {
     }
 
     /// Finalize encoding by flushing any remaining bits in the buffer
+    /// We will pad the remaining bits with `1`s to signal the end of the stream.
     pub fn finalize(&mut self, output: &mut Vec<u8>) {
         if self.buffer_len > 0 {
-            // Pad with 0, so we can flush it
-            self.write_bits_to_buffer(0, 8 - self.buffer_len);
+            // Pad with 1s, so entry is invalid. On decompression this will be the
+            // EOF marker
+            self.write_bits_to_buffer((1 << (8 - self.buffer_len)) - 1, 8 - self.buffer_len);
             self.flush_buffer(output);
         }
     }
 
     /// Rice decoding for multiple integers from a byte stream
-    pub fn decode(&self, input: &[u8]) -> Vec<u32> {
-        let total_values = input[0] as usize;
-        let input = &input[1..];
-        let mut results = Vec::new();
+    ///
+    /// Returns the number of bytes read
+    pub fn decode_into(&self, input: &[u8], out: &mut Vec<u32>) -> usize {
         let mut bit_pos: u8 = 0;
         let mut byte_pos: usize = 0;
 
@@ -147,7 +146,7 @@ impl RiceCoder {
             Some(value)
         }
 
-        while byte_pos < input.len() && results.len() < total_values {
+        while byte_pos < input.len() {
             // Decode unary quotient
             let mut quotient: u32 = 0;
             while let Some(bit) = read_bit(input, &mut byte_pos, &mut bit_pos) {
@@ -160,13 +159,13 @@ impl RiceCoder {
 
             // Decode the binary remainder
             if let Some(remainder) = read_bits(input, self.k, &mut byte_pos, &mut bit_pos) {
-                results.push((quotient << self.k) + remainder);
+                out.push((quotient << self.k) + remainder);
             } else {
                 break; // Not enough bits to complete the number
             }
         }
 
-        results
+        byte_pos + 1 + (bit_pos > 0) as usize
     }
 }
 
@@ -188,7 +187,8 @@ mod tests {
         coder.encode_vals(&original_values, &mut encoded);
 
         // Decoding
-        let decoded_values = coder.decode(&encoded);
+        let mut decoded_values = Vec::new();
+        coder.decode_into(&encoded, &mut decoded_values);
 
         // Assert that the decoded values match the original values
         assert_eq!(original_values, decoded_values);
@@ -197,10 +197,10 @@ mod tests {
     #[test]
     fn test_calculate_optimal_k_small_values() {
         let values = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let optimal_k = estimate_optimal_k(&values, 50.0);
+        let optimal_k = estimate_optimal_k(&values, 50);
         assert_eq!(optimal_k, 3);
 
-        let optimal_k_90 = estimate_optimal_k(&values, 90.0);
+        let optimal_k_90 = estimate_optimal_k(&values, 90);
         assert_eq!(optimal_k_90, 4);
     }
 
@@ -247,7 +247,8 @@ mod tests {
             coder.encode_vals(&values, &mut encoded);
 
             // Decoding
-            let decoded_values = coder.decode(&encoded);
+            let mut decoded_values = Vec::new();
+            coder.decode_into(&encoded, &mut decoded_values);
 
             // Assert that the decoded values match the original values
             prop_assert_eq!(values, decoded_values);

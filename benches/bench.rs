@@ -71,7 +71,7 @@ fn bench_group() {
                 let mut coder = create_rice_coder(k);
 
                 // Encoding
-                let mut encoded: Vec<u8> = Vec::new();
+                let mut encoded: Vec<u8> = Vec::with_capacity(data.len() * 4);
                 coder.encode_vals(data, &mut encoded);
 
                 // Decoding
@@ -80,7 +80,7 @@ fn bench_group() {
                 Some(encoded.len() as u64)
             });
         }
-        for percentile in [50.0, 80.0, 90.0, 100.0].iter() {
+        for percentile in [50, 80, 90, 100].iter() {
             group.register_with_input(
                 format!(
                     "write rice code k detect based on {} percentile",
@@ -91,7 +91,7 @@ fn bench_group() {
                     let k = estimate_optimal_k(data, *percentile);
                     let mut coder = create_rice_coder(k);
 
-                    let mut encoded: Vec<u8> = Vec::new();
+                    let mut encoded: Vec<u8> = Vec::with_capacity(data.len() * 4);
                     coder.encode_vals(data, &mut encoded);
                     //Some(encoded.len() as u64)
                     let mut sorted_values = data.to_vec();
@@ -123,7 +123,8 @@ fn bench_group() {
             group.register_with_input(format!("read rice code k:{}", k), encoded, move |data| {
                 // Decoding
                 let coder = create_rice_coder(k);
-                let decoded_values = coder.decode(data);
+                let mut decoded_values = Vec::new();
+                coder.decode_into(data, &mut decoded_values);
 
                 Some(decoded_values.len() as u64)
             });
