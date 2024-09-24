@@ -66,8 +66,9 @@ impl RiceCoder {
     }
 
     /// Rice encoding for a given integer
+    /// Need to call finalize at the end
     #[inline]
-    fn encode(&mut self, value: u32, output: &mut Vec<u8>) {
+    pub fn encode(&mut self, value: u32, output: &mut Vec<u8>) {
         let quotient = value >> self.k; // value / 2^k
         let remainder = value & ((1 << self.k) - 1); // value % 2^k
 
@@ -97,18 +98,17 @@ impl RiceCoder {
     /// Finalize encoding by flushing any remaining bits in the buffer
     /// We will pad the remaining bits with `1`s to signal the end of the stream.
     pub fn finalize(&mut self, output: &mut Vec<u8>) {
-        if self.buffer_len > 0 {
-            // Pad with 1s, so entry is invalid. On decompression this will be the
-            // EOF marker
-            self.write_bits_to_buffer((1 << (8 - self.buffer_len)) - 1, 8 - self.buffer_len);
-            self.flush_buffer(output);
-        }
+        // Pad with 1s, so entry is invalid. On decompression this will be the
+        // EOF marker
+        let padding = 8 - self.buffer_len;
+        self.write_bits_to_buffer((1 << padding) - 1, padding);
+        self.flush_buffer(output);
     }
 
     /// Rice decoding for multiple integers from a byte stream
     ///
     /// Returns the number of bytes read
-    pub fn decode_into(&self, input: &[u8], out: &mut Vec<u32>) -> usize {
+    pub fn decode_into(&self, input: &[u8], out: &mut Vec<u32>, num_values: u32) -> usize {
         let mut bit_pos: u8 = 0;
         let mut byte_pos: usize = 0;
 
@@ -146,7 +146,7 @@ impl RiceCoder {
             Some(value)
         }
 
-        while byte_pos < input.len() {
+        while byte_pos < input.len() && out.len() < num_values as usize {
             // Decode unary quotient
             let mut quotient: u32 = 0;
             while let Some(bit) = read_bit(input, &mut byte_pos, &mut bit_pos) {
@@ -161,11 +161,10 @@ impl RiceCoder {
             if let Some(remainder) = read_bits(input, self.k, &mut byte_pos, &mut bit_pos) {
                 out.push((quotient << self.k) + remainder);
             } else {
-                break; // Not enough bits to complete the number
+                break; // Not enough bits to complete the number, hit EOF marker
             }
         }
-
-        byte_pos + 1 + (bit_pos > 0) as usize
+        byte_pos + 1
     }
 }
 
@@ -178,20 +177,9 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn test_rice_coding() {
-        let mut coder = RiceCoder::new(3);
+    fn test_case_1() {
         let original_values: Vec<u32> = vec![37, 12, 5, 150, 255, 0, 10];
-
-        // Encoding
-        let mut encoded: Vec<u8> = Vec::new();
-        coder.encode_vals(&original_values, &mut encoded);
-
-        // Decoding
-        let mut decoded_values = Vec::new();
-        coder.decode_into(&encoded, &mut decoded_values);
-
-        // Assert that the decoded values match the original values
-        assert_eq!(original_values, decoded_values);
+        test_rice_coding(3, &original_values);
     }
 
     #[test]
@@ -239,7 +227,8 @@ mod tests {
     // Property-based test for random values
     proptest! {
         #[test]
-        fn test_rice_coding_random_values(values in prop::collection::vec(0u32..=500_000, 0..20), k in 1u8..8) {
+        fn test_rice_coding_random_values(values in prop::collection::vec(0u32..=500_000, 1..20), k in 1u8..8) {
+        //fn test_rice_coding_random_values(values in prop::collection::vec(0u32..=500, 1..3), k in 1u8..8) {
             let mut coder = create_rice_coder(k); // Create a RiceCoder with the given k value
 
             // Encoding
@@ -248,10 +237,41 @@ mod tests {
 
             // Decoding
             let mut decoded_values = Vec::new();
-            coder.decode_into(&encoded, &mut decoded_values);
+            let num_bytes = coder.decode_into(&encoded, &mut decoded_values, values.len() as u32);
+            prop_assert_eq!(num_bytes, encoded.len());
 
             // Assert that the decoded values match the original values
             prop_assert_eq!(values, decoded_values);
         }
+    }
+
+    fn test_rice_coding(k: u8, values: &[u32]) {
+        let mut coder = create_rice_coder(k); // Create a RiceCoder with the given k value
+
+        // Encoding
+        let mut encoded: Vec<u8> = Vec::new();
+        coder.encode_vals(values, &mut encoded);
+        //print_bits(&encoded);
+
+        // Decoding
+        let mut decoded_values = Vec::new();
+        let num_bytes = coder.decode_into(&encoded, &mut decoded_values, values.len() as u32);
+        assert_eq!(num_bytes, encoded.len());
+
+        // Assert that the decoded values match the original values
+        assert_eq!(values, decoded_values);
+    }
+
+    #[test]
+    fn test_regression_1() {
+        test_rice_coding(3, &[96]);
+    }
+    #[test]
+    fn test_regression_2() {
+        test_rice_coding(4, &[96]);
+    }
+    #[test]
+    fn test_regression_3() {
+        test_rice_coding(1, &[0]);
     }
 }

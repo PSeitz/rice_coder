@@ -106,12 +106,13 @@ fn bench_group() {
 
         group.run();
 
-        let mut encoded_per_k: Vec<Vec<u8>> = vec![Vec::new(); k_range.end as usize];
+        let mut encoded_per_k: Vec<(Vec<u8>, u32)> = vec![(Vec::new(), 0); k_range.end as usize];
         for k in k_range.clone() {
             let mut encoded: Vec<u8> = Vec::new();
             let mut coder = create_rice_coder(k);
             coder.encode_vals(data, &mut encoded);
-            encoded_per_k[k as usize] = encoded;
+            encoded_per_k[k as usize].0 = encoded;
+            encoded_per_k[k as usize].1 = data.len() as u32;
         }
         let mut group = runner.new_group();
         group.set_name(input_name);
@@ -120,14 +121,18 @@ fn bench_group() {
         for k in k_range.clone() {
             let encoded = &encoded_per_k[k as usize];
 
-            group.register_with_input(format!("read rice code k:{}", k), encoded, move |data| {
-                // Decoding
-                let coder = create_rice_coder(k);
-                let mut decoded_values = Vec::new();
-                coder.decode_into(data, &mut decoded_values);
+            group.register_with_input(
+                format!("read rice code k:{}", k),
+                encoded,
+                move |(data, num_vals)| {
+                    // Decoding
+                    let coder = create_rice_coder(k);
+                    let mut decoded_values = Vec::new();
+                    coder.decode_into(data, &mut decoded_values, *num_vals);
 
-                Some(decoded_values.len() as u64)
-            });
+                    Some(decoded_values.len() as u64)
+                },
+            );
         }
         group.run();
     }
